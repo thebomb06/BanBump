@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import shutil
 from decimal import Decimal, InvalidOperation
@@ -83,6 +82,7 @@ def resolve_chromedriver_path() -> str | None:
     if CHROMEDRIVER_PATH:
         return CHROMEDRIVER_PATH
 
+    # Optional: allow chromedriver_py if you use it
     try:
         from chromedriver_py import binary_path
     except ImportError:
@@ -125,35 +125,63 @@ def login_with_selenium(driver: webdriver.Chrome) -> None:
         )
 
 
-def main() -> None:
+def build_chrome_options() -> Options:
     options = Options()
-    options.add_argument("--start-maximized")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=0")
+
+    # Container/LXC hardening + "DevToolsActivePort" fixes
     if HEADLESS:
         options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")                 # critical for root-in-container
+    options.add_argument("--disable-dev-shm-usage")      # avoid small /dev/shm
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--remote-debugging-port=9222") # use a stable non-zero port
+    options.add_argument("--user-data-dir=/tmp/chrome-profile")  # ensure writable profile
+    options.add_argument("--disable-features=Translate,BackForwardCache")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+
     options.add_argument(f"--user-agent={DEFAULT_USER_AGENT}")
+
+    # If you want to override profile dir via env, keep it, but ensure it's writable
     ensure_dir(CHROME_PROFILE_DIR)
     options.add_argument(f"--user-data-dir={CHROME_PROFILE_DIR}")
+
     options.binary_location = resolve_chrome_binary()
+    return options
+
+
+def make_driver() -> webdriver.Chrome:
+    options = build_chrome_options()
 
     resolved_driver = resolve_chromedriver_path()
     service = Service(executable_path=resolved_driver) if resolved_driver else Service()
+
     try:
         driver = webdriver.Chrome(options=options, service=service)
     except WebDriverException as exc:
-        message = str(exc)
-        if "Status code was: 127" in message:
+        msg = str(exc)
+        if "DevToolsActivePort file doesn't exist" in msg:
             raise RuntimeError(
-                "ChromeDriver failed to start (status 127). This usually means missing system "
-                "libraries or a missing Chrome/Chromium install inside the container. "
-                "Install Chromium or set CHROME_BIN/CHROMEDRIVER_PATH explicitly."
+                "Chrome failed to start in this container (DevToolsActivePort). "
+                "This is usually caused by sandbox / shm / missing libs issues.\n"
+                "You already have --no-sandbox and --disable-dev-shm-usage enabled; "
+                "next check that chromium + chromium-driver are installed and that /tmp is writable."
+            ) from exc
+        if "Status code was: 127" in msg:
+            raise RuntimeError(
+                "ChromeDriver failed to start (status 127). Missing system libraries or Chrome/Chromium.\n"
+                "On Debian/Ubuntu, try: apt install -y chromium chromium-driver"
             ) from exc
         raise
+
+    driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+    return driver
+
+
+def main() -> None:
+    driver = make_driver()
     try:
-        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
         login_with_selenium(driver)
 
         driver.get(TARGET_URL)
@@ -161,17 +189,27 @@ def main() -> None:
         print(f"Loaded (post-login): {driver.title}")
 
         day_value = read_day_value(DAY_FILE)
-        replyInput = driver.find_element(By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[1]/div[2]/div")
-        replyInput.send_keys(f"Bump, day {day_value}")
+
+        reply_input = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located(
+                (By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[1]/div[2]/div")
+            )
+        )
+        reply_input.click()
+        reply_input.send_keys(f"Bump, day {day_value}")
+
+        # If you want to actually submit, uncomment:
         # write_day_value(DAY_FILE, day_value + DAY_INCREMENT)
-        #
-        # replySubmit = driver.find_element(By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[3]/div[1]/button/span")
-        # replySubmit.click()
+        # reply_submit = WebDriverWait(driver, 15).until(
+        #     EC.element_to_be_clickable(
+        #         (By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[3]/div[1]/button/span")
+        #     )
+        # )
+        # reply_submit.click()
 
         print(f"Bumped @ {time.time()}")
     finally:
         driver.quit()
-
 
 
 if __name__ == "__main__":
