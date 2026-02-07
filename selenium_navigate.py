@@ -1,13 +1,15 @@
 import os
 import re
 import time
+import shutil
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from dotenv import load_dotenv
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -24,6 +26,8 @@ PASSWORD = os.getenv("FORUM_PASS") or os.getenv("PASS") or "XXXX"
 REQUEST_TIMEOUT = 15
 PAGE_LOAD_TIMEOUT = 30
 HEADLESS = os.getenv("HEADLESS", "1") == "1"
+CHROME_BIN = os.getenv("CHROME_BIN", "")
+CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "")
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -50,6 +54,36 @@ def read_day_value(path: Path) -> Decimal:
 
 def write_day_value(path: Path, value: Decimal) -> None:
     path.write_text(str(value), encoding="utf-8")
+
+
+def resolve_chrome_binary() -> str:
+    candidates = [
+        CHROME_BIN,
+        shutil.which("google-chrome") or "",
+        shutil.which("chromium") or "",
+        shutil.which("chromium-browser") or "",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError(
+        "Chrome/Chromium binary not found. Install it or set CHROME_BIN to its full path."
+    )
+
+
+def resolve_chromedriver_path() -> str | None:
+    if CHROMEDRIVER_PATH:
+        return CHROMEDRIVER_PATH
+
+    try:
+        from chromedriver_py import binary_path
+    except ImportError:
+        return None
+
+    return binary_path
 
 
 def login_with_selenium(driver: webdriver.Chrome) -> None:
@@ -94,8 +128,21 @@ def main() -> None:
     if HEADLESS:
         options.add_argument("--headless=new")
     options.add_argument(f"--user-agent={DEFAULT_USER_AGENT}")
+    options.binary_location = resolve_chrome_binary()
 
-    driver = webdriver.Chrome(options=options)
+    resolved_driver = resolve_chromedriver_path()
+    service = Service(executable_path=resolved_driver) if resolved_driver else Service()
+    try:
+        driver = webdriver.Chrome(options=options, service=service)
+    except WebDriverException as exc:
+        message = str(exc)
+        if "Status code was: 127" in message:
+            raise RuntimeError(
+                "ChromeDriver failed to start (status 127). This usually means missing system "
+                "libraries or a missing Chrome/Chromium install inside the container. "
+                "Install Chromium or set CHROME_BIN/CHROMEDRIVER_PATH explicitly."
+            ) from exc
+        raise
     try:
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
         login_with_selenium(driver)
