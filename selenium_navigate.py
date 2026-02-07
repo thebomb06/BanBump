@@ -18,7 +18,7 @@ load_dotenv()
 
 BASE_URL = "https://forums.playdeadlock.com"
 LOGIN_URL = f"{BASE_URL}/login"
-LOGIN_POST_URL = f"{BASE_URL}/login"
+LOGIN_POST_URL = f"{BASE_URL}/login/login"
 TARGET_URL = f"{BASE_URL}/threads/doorman-permaban-bug-id-53130683.101983"
 
 USERNAME = os.getenv("FORUM_USER") or os.getenv("USER") or "thebomb665"
@@ -144,10 +144,10 @@ def main() -> None:
         day_value = read_day_value(DAY_FILE)
         replyInput = driver.find_element(By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[1]/div[2]/div")
         replyInput.send_keys(f"Bump, day {day_value}")
-        write_day_value(DAY_FILE, day_value + DAY_INCREMENT)
-
-        replySubmit = driver.find_element(By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[3]/div[1]/button/span")
-        replySubmit.click()
+        # write_day_value(DAY_FILE, day_value + DAY_INCREMENT)
+        #
+        # replySubmit = driver.find_element(By.XPATH, "/html/body/div[1]/div[4]/div/div[2]/div[3]/div/form/div/div/div/div/div[2]/div/div[3]/div[1]/button/span")
+        # replySubmit.click()
 
         print(f"Bumped @ {time.time()}")
     finally:
