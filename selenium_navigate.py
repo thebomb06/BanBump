@@ -131,6 +131,7 @@ def main() -> None:
 
     options = Options()
     options.add_argument("--start-maximized")
+    options.add_argument("--headless")
     
     driver = webdriver.Chrome(options=options)
     try:
