@@ -3,12 +3,10 @@ import re
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Iterable
 
-import requests
 from dotenv import load_dotenv
-from requests import Session
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -18,7 +16,6 @@ load_dotenv()
 
 BASE_URL = "https://forums.playdeadlock.com"
 LOGIN_URL = f"{BASE_URL}/login"
-LOGIN_POST_URL = f"{BASE_URL}/login/login"
 TARGET_URL = f"{BASE_URL}/threads/doorman-permaban-bug-id-53130683.101983"
 
 USERNAME = os.getenv("FORUM_USER") or os.getenv("USER") or "thebomb665"
@@ -26,6 +23,7 @@ PASSWORD = os.getenv("FORUM_PASS") or os.getenv("PASS") or "XXXX"
 
 REQUEST_TIMEOUT = 15
 PAGE_LOAD_TIMEOUT = 30
+HEADLESS = os.getenv("HEADLESS", "1") == "1"
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -54,88 +52,53 @@ def write_day_value(path: Path, value: Decimal) -> None:
     path.write_text(str(value), encoding="utf-8")
 
 
-def fetch_login_token(session: Session) -> str:
-    """Load the login page to collect the CSRF token the form requires."""
-    response = session.get(LOGIN_URL, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
+def login_with_selenium(driver: webdriver.Chrome) -> None:
+    driver.get(LOGIN_URL)
 
-    match = re.search(r'name="_xfToken"\s+value="([^"]+)"', response.text)
-    if not match:
-        raise RuntimeError("Could not find _xfToken on the login page; layout may have changed.")
+    if driver.get_cookie("xf_user"):
+        return
 
-    return match.group(1)
-
-
-def send_login_request(password: str) -> Session:
-    session = requests.Session()
-    session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
-
-    xf_token = fetch_login_token(session)
-    form_data = {
-        "_xfToken": xf_token,
-        "login": USERNAME,
-        "password": password,
-        "remember": "1",
-        "_xfRedirect": f"{BASE_URL}/",
-    }
-
-    response = session.post(
-        LOGIN_POST_URL,
-        data=form_data,
-        timeout=REQUEST_TIMEOUT,
-        headers={
-            "Referer": LOGIN_URL,
-            "Origin": BASE_URL,
-        },
-        allow_redirects=True,
-    )
     try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        raise RuntimeError(
-            f"Login POST failed: {response.status_code} {response.reason}; snippet: {response.text[:200]!r}"
-        ) from exc
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.NAME, "login")))
+    except TimeoutException as exc:
+        raise RuntimeError("Login form did not load; possible challenge page or outage.") from exc
 
-    if "xf_user" not in session.cookies:
-        # Try to surface any inline error the login form returned (bad creds, captcha, etc.)
-        error = re.search(
-            r'class="formRow[^>]*formRow--error"[^>]*>\s*<dd[^>]*>\s*<ul[^>]*>\s*<li[^>]*>(.*?)<',
-            response.text,
-            re.S,
+    user_field = driver.find_element(By.NAME, "login")
+    pass_field = driver.find_element(By.NAME, "password")
+    user_field.clear()
+    user_field.send_keys(USERNAME)
+    pass_field.clear()
+    pass_field.send_keys(PASSWORD)
+    pass_field.submit()
+
+    try:
+        WebDriverWait(driver, 15).until(lambda d: d.get_cookie("xf_user") is not None)
+    except TimeoutException:
+        error_els = driver.find_elements(
+            By.CSS_SELECTOR,
+            ".formRow--error li, .formRow--error .formRow-explain, .blockMessage--error",
         )
-        error_text = error.group(1).strip() if error else "No error message found."
+        messages = [el.text.strip() for el in error_els if el.text.strip()]
+        error_text = messages[0] if messages else "No error message found."
         raise RuntimeError(
-            f"Login may have failed; xf_user cookie not found. Last URL: {response.url}. Error text: {error_text}"
-        )
-
-    return session
-
-
-def push_cookies_to_driver(driver: webdriver.Chrome, cookies: Iterable[requests.cookies.Cookie]) -> None:
-    driver.get(BASE_URL)
-    for cookie in cookies:
-        if cookie.domain not in ("", "forums.playdeadlock.com", ".forums.playdeadlock.com"):
-            continue
-        driver.add_cookie(
-            {
-                "name": cookie.name,
-                "value": cookie.value,
-                "path": cookie.path,
-                "domain": cookie.domain or "forums.playdeadlock.com",
-            }
+            f"Login may have failed; xf_user cookie not found. Last URL: {driver.current_url}. "
+            f"Error text: {error_text}"
         )
 
 
 def main() -> None:
-    session = send_login_request(PASSWORD)
-
     options = Options()
     options.add_argument("--start-maximized")
-    
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    if HEADLESS:
+        options.add_argument("--headless=new")
+    options.add_argument(f"--user-agent={DEFAULT_USER_AGENT}")
+
     driver = webdriver.Chrome(options=options)
     try:
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
-        push_cookies_to_driver(driver, session.cookies)
+        login_with_selenium(driver)
 
         driver.get(TARGET_URL)
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
