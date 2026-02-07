@@ -18,7 +18,7 @@ load_dotenv()
 
 BASE_URL = "https://forums.playdeadlock.com"
 LOGIN_URL = f"{BASE_URL}/login"
-LOGIN_POST_URL = f"{BASE_URL}/login/login"
+LOGIN_POST_URL = f"{BASE_URL}/login"
 TARGET_URL = f"{BASE_URL}/threads/doorman-permaban-bug-id-53130683.101983"
 
 USERNAME = os.getenv("FORUM_USER") or os.getenv("USER") or "thebomb665"
