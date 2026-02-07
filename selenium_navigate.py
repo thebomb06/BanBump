@@ -28,6 +28,7 @@ PAGE_LOAD_TIMEOUT = 30
 HEADLESS = os.getenv("HEADLESS", "1") == "1"
 CHROME_BIN = os.getenv("CHROME_BIN", "")
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "")
+CHROME_PROFILE_DIR = os.getenv("CHROME_PROFILE_DIR", "/tmp/selenium-chrome-profile")
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -72,6 +73,10 @@ def resolve_chrome_binary() -> str:
     raise RuntimeError(
         "Chrome/Chromium binary not found. Install it or set CHROME_BIN to its full path."
     )
+
+
+def ensure_dir(path: str) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
 
 
 def resolve_chromedriver_path() -> str | None:
@@ -125,9 +130,13 @@ def main() -> None:
     options.add_argument("--start-maximized")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--remote-debugging-port=0")
     if HEADLESS:
         options.add_argument("--headless=new")
     options.add_argument(f"--user-agent={DEFAULT_USER_AGENT}")
+    ensure_dir(CHROME_PROFILE_DIR)
+    options.add_argument(f"--user-data-dir={CHROME_PROFILE_DIR}")
     options.binary_location = resolve_chrome_binary()
 
     resolved_driver = resolve_chromedriver_path()
